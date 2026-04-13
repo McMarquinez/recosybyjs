@@ -17,4 +17,8 @@ if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
   php artisan migrate --force
 fi
 
+if [ "${RUN_SEEDER:-false}" = "true" ]; then
+    php artisan db:seed --force
+fi
+
 exec php -S 0.0.0.0:${PORT:-10000} -t public
