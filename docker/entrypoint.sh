@@ -1,11 +1,17 @@
 #!/usr/bin/env sh
 set -eu
 
+# Create required Laravel writable folders
+mkdir -p storage/framework/cache
+mkdir -p storage/framework/sessions
+mkdir -p storage/framework/views
+mkdir -p bootstrap/cache
+
 php artisan storage:link || true
 
 php artisan config:clear
+php artisan cache:clear
 php artisan config:cache
-# php artisan cache:clear
 
 if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
   php artisan migrate --force
