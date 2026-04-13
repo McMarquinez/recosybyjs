@@ -15,6 +15,12 @@ Route::get('/shop', function () {
     return redirect()->route('home');
 })->name('shop.index');
 
+Route::get('/products/{slug}', function (string $slug) {
+    return Inertia::render('Shop/Product', [
+        'slug' => $slug,
+    ]);
+})->name('shop.product');
+
 Route::get('/cart', function () {
     return Inertia::render('Shop/Cart');
 })->name('shop.cart');

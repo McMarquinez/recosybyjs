@@ -5,8 +5,8 @@ import { Input } from '@/components/ui/input';
 import ShopLayout from '@/layouts/ShopLayout.vue';
 import { webFetch } from '@/lib/web-fetch';
 import { Head, Link } from '@inertiajs/vue3';
-import { Minus, Plus, ShoppingBag, ShoppingCart, Store } from 'lucide-vue-next';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { LoaderCircle, Minus, Plus, ShoppingBag } from 'lucide-vue-next';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 
 type ProductImage = {
     id: number;
@@ -38,32 +38,23 @@ type CartSummary = {
     total: number;
 };
 
-type Banner = {
-    id: number;
-    title: string;
-    subtitle: string | null;
-    image_path: string | null;
-    cta_text: string | null;
-    cta_url: string | null;
-};
-
 const products = ref<Product[]>([]);
 const cart = ref<CartSummary>({ items: [], total: 0 });
-const banners = ref<Banner[]>([]);
 const loading = ref(true);
-const cartLoading = ref(false);
+const addingProductId = ref<number | null>(null);
 const pageError = ref('');
-const actionError = ref('');
-const successMessage = ref('');
 const quantities = reactive<Record<number, number>>({});
 const searchQuery = ref('');
+const selectedCategory = ref<string | null>(null);
+const toasts = ref<{ id: number; type: 'success' | 'error'; message: string }[]>([]);
+let toastSeed = 0;
 
 const currency = new Intl.NumberFormat('en-PH', {
     style: 'currency',
     currency: 'PHP',
 });
 
-const featuredProducts = computed(() => products.value.slice(0, 3));
+const featuredProducts = computed(() => visibleProducts.value.slice(0, 3));
 const cartCount = computed(() => cart.value.items.reduce((sum: number, item: CartItem) => sum + item.quantity, 0));
 
 const categories = computed(() => {
@@ -79,14 +70,6 @@ const categories = computed(() => {
 const getImageUrl = (path?: string | null) => {
     if (!path) {
         return 'https://placehold.co/800x800/f4efe6/7a4b2d?text=No+Image';
-    }
-
-    return `/storage/${path}`;
-};
-
-const getBannerImageUrl = (path?: string | null) => {
-    if (!path) {
-        return 'https://placehold.co/1600x900/0f172a/e2e8f0?text=Banner';
     }
 
     return `/storage/${path}`;
@@ -113,11 +96,11 @@ const loadProducts = async () => {
 
 const visibleProducts = computed(() => {
     const value = searchQuery.value.trim().toLowerCase();
-    if (!value) return products.value;
-
     return products.value.filter((product: Product) => {
+        const categoryMatched = selectedCategory.value ? product.category === selectedCategory.value : true;
         const haystack = `${product.name} ${product.slug} ${product.category ?? ''} ${product.description ?? ''}`.toLowerCase();
-        return haystack.includes(value);
+        const queryMatched = !value || haystack.includes(value);
+        return categoryMatched && queryMatched;
     });
 });
 
@@ -131,21 +114,12 @@ const loadCart = async () => {
     cart.value = (await response.json()) as CartSummary;
 };
 
-const loadBanners = async () => {
-    const response = await webFetch('/api/banners');
-    if (!response.ok) {
-        return;
-    }
-
-    banners.value = (await response.json()) as Banner[];
-};
-
 const syncPage = async () => {
     loading.value = true;
     pageError.value = '';
 
     try {
-        await Promise.all([loadProducts(), loadCart(), loadBanners()]);
+        await Promise.all([loadProducts(), loadCart()]);
     } catch (error) {
         pageError.value = error instanceof Error ? error.message : 'Something went wrong while loading the shop.';
     } finally {
@@ -153,10 +127,19 @@ const syncPage = async () => {
     }
 };
 
+const pushToast = (type: 'success' | 'error', message: string) => {
+    const id = ++toastSeed;
+    toasts.value.push({ id, type, message });
+
+    window.setTimeout(() => {
+        toasts.value = toasts.value.filter((toast: { id: number }) => toast.id !== id);
+    }, 2800);
+};
+
+const isAdding = (productId: number) => addingProductId.value === productId;
+
 const addToCart = async (product: Product) => {
-    cartLoading.value = true;
-    actionError.value = '';
-    successMessage.value = '';
+    addingProductId.value = product.id;
 
     try {
         const response = await webFetch('/api/cart/add', {
@@ -173,16 +156,16 @@ const addToCart = async (product: Product) => {
         const data = await response.json();
 
         if (!response.ok) {
-            actionError.value = data.message ?? 'Unable to add item to cart.';
+            pushToast('error', data.message ?? 'Unable to add item to cart.');
             return;
         }
 
         cart.value = data as CartSummary;
-        successMessage.value = `${product.name} added to cart.`;
+        pushToast('success', `${product.name} added to cart.`);
     } catch (error) {
-        actionError.value = error instanceof Error ? error.message : 'Unable to add item to cart.';
+        pushToast('error', error instanceof Error ? error.message : 'Unable to add item to cart.');
     } finally {
-        cartLoading.value = false;
+        addingProductId.value = null;
     }
 };
 
@@ -191,13 +174,25 @@ const changeQuantity = (productId: number, amount: number) => {
     quantities[productId] = Math.max(1, nextQuantity);
 };
 
-onMounted(() => {
-    window.addEventListener('shop:search', ((event: Event) => {
-        const detail = (event as CustomEvent).detail as { query?: string } | undefined;
-        searchQuery.value = detail?.query ?? '';
-    }) as EventListener);
+const onSearch = (event: Event) => {
+    const detail = (event as CustomEvent).detail as { query?: string } | undefined;
+    searchQuery.value = detail?.query ?? '';
+};
 
+const onCategory = (event: Event) => {
+    const detail = (event as CustomEvent).detail as { category?: string | null } | undefined;
+    selectedCategory.value = detail?.category ?? null;
+};
+
+onMounted(() => {
+    window.addEventListener('shop:search', onSearch as EventListener);
+    window.addEventListener('shop:filter-category', onCategory as EventListener);
     void syncPage();
+});
+
+onBeforeUnmount(() => {
+    window.removeEventListener('shop:search', onSearch as EventListener);
+    window.removeEventListener('shop:filter-category', onCategory as EventListener);
 });
 </script>
 
@@ -258,15 +253,26 @@ onMounted(() => {
                         <p class="text-sm text-slate-500">Popular</p>
                     </div>
                     <div class="mt-5 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                        <a
+                        <button
+                            type="button"
+                            class="group rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300 hover:shadow-sm"
+                            :class="selectedCategory === null ? 'border-slate-900 bg-slate-50' : ''"
+                            @click="selectedCategory = null"
+                        >
+                            <p class="text-sm font-semibold text-slate-900 group-hover:text-slate-950">All</p>
+                            <p class="mt-1 text-xs text-slate-500">Browse everything</p>
+                        </button>
+                        <button
                             v-for="category in categories"
                             :key="category"
-                            :href="`#category-${encodeURIComponent(category)}`"
-                            class="group rounded-xl border border-slate-200 bg-white p-4 transition hover:border-slate-300 hover:shadow-sm"
+                            type="button"
+                            class="group rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300 hover:shadow-sm"
+                            :class="selectedCategory === category ? 'border-slate-900 bg-slate-50' : ''"
+                            @click="selectedCategory = category"
                         >
                             <p class="text-sm font-semibold text-slate-900 group-hover:text-slate-950">{{ category }}</p>
                             <p class="mt-1 text-xs text-slate-500">Browse deals</p>
-                        </a>
+                        </button>
                     </div>
                 </section>
 
@@ -286,18 +292,20 @@ onMounted(() => {
                             class="overflow-hidden border-slate-200 bg-white"
                         >
                             <CardContent class="space-y-5 p-5">
-                                <div class="overflow-hidden rounded-[1.5rem] bg-stone-100">
+                                <Link :href="route('shop.product', { slug: product.slug })" class="block overflow-hidden rounded-[1.5rem] bg-stone-100">
                                     <img
                                         :src="getImageUrl(product.images.find((image) => image.is_primary)?.image_path ?? product.images[0]?.image_path)"
                                         :alt="product.name"
                                         class="h-60 w-full object-cover transition duration-500 hover:scale-105"
                                     />
-                                </div>
+                                </Link>
 
                                 <div class="space-y-2">
                                     <div class="flex items-start justify-between gap-4">
                                         <div>
-                                            <h3 class="text-xl font-semibold text-stone-900">{{ product.name }}</h3>
+                                            <Link :href="route('shop.product', { slug: product.slug })" class="text-xl font-semibold text-stone-900 hover:underline">
+                                                {{ product.name }}
+                                            </Link>
                                             <p class="mt-1 text-sm text-stone-500">{{ product.category || 'Uncategorized' }} • SKU {{ product.slug }}</p>
                                         </div>
                                         <span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900">
@@ -341,22 +349,16 @@ onMounted(() => {
 
                                     <Button
                                         class="h-full rounded-2xl bg-stone-950 px-6 text-white hover:bg-stone-800"
-                                        :disabled="cartLoading || product.stock < 1"
+                                        :disabled="isAdding(product.id) || product.stock < 1"
                                         @click="addToCart(product)"
                                     >
+                                        <LoaderCircle v-if="isAdding(product.id)" class="mr-2 h-4 w-4 animate-spin" />
                                         <ShoppingBag class="mr-2 h-4 w-4" />
-                                        Add
+                                        {{ isAdding(product.id) ? 'Adding' : 'Add' }}
                                     </Button>
                                 </div>
                             </CardContent>
                         </Card>
-                    </div>
-
-                    <div v-if="actionError" class="mt-4 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
-                        {{ actionError }}
-                    </div>
-                    <div v-if="successMessage" class="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-700">
-                        {{ successMessage }}
                     </div>
                 </section>
 
@@ -373,22 +375,25 @@ onMounted(() => {
                         <Card
                             v-for="product in visibleProducts"
                             :key="product.id"
+                            :id="product.category ? `category-${encodeURIComponent(product.category)}` : undefined"
                             class="overflow-hidden border-slate-200 bg-white transition hover:shadow-sm"
                         >
                             <CardContent class="space-y-5 p-5">
-                                <div class="overflow-hidden rounded-2xl bg-slate-100">
+                                <Link :href="route('shop.product', { slug: product.slug })" class="block overflow-hidden rounded-2xl bg-slate-100">
                                     <img
                                         :src="getImageUrl(product.images.find((image) => image.is_primary)?.image_path ?? product.images[0]?.image_path)"
                                         :alt="product.name"
                                         class="h-56 w-full object-cover transition duration-500 hover:scale-105"
                                     />
-                                </div>
+                                </Link>
 
                                 <div class="space-y-1">
                                     <p class="text-xs font-semibold uppercase tracking-[0.25em] text-slate-500">
                                         {{ product.category || 'Uncategorized' }}
                                     </p>
-                                    <h3 class="text-lg font-semibold text-slate-900">{{ product.name }}</h3>
+                                    <Link :href="route('shop.product', { slug: product.slug })" class="text-lg font-semibold text-slate-900 hover:underline">
+                                        {{ product.name }}
+                                    </Link>
                                     <p class="text-sm text-slate-500">SKU {{ product.slug }}</p>
                                 </div>
 
@@ -416,9 +421,10 @@ onMounted(() => {
                                         </button>
                                     </div>
 
-                                    <Button class="h-full rounded-2xl bg-slate-950 px-6 text-white hover:bg-slate-800" :disabled="cartLoading || product.stock < 1" @click="addToCart(product)">
+                                    <Button class="h-full rounded-2xl bg-slate-950 px-6 text-white hover:bg-slate-800" :disabled="isAdding(product.id) || product.stock < 1" @click="addToCart(product)">
+                                        <LoaderCircle v-if="isAdding(product.id)" class="mr-2 h-4 w-4 animate-spin" />
                                         <ShoppingBag class="mr-2 h-4 w-4" />
-                                        Add
+                                        {{ isAdding(product.id) ? 'Adding' : 'Add' }}
                                     </Button>
                                 </div>
                             </CardContent>
@@ -426,6 +432,17 @@ onMounted(() => {
                     </div>
                 </section>
             </template>
+        </div>
+
+        <div class="pointer-events-none fixed right-4 top-20 z-50 space-y-2">
+            <div
+                v-for="toast in toasts"
+                :key="toast.id"
+                class="pointer-events-auto min-w-64 rounded-xl border px-4 py-3 text-sm shadow-lg"
+                :class="toast.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'"
+            >
+                {{ toast.message }}
+            </div>
         </div>
     </ShopLayout>
 </template>

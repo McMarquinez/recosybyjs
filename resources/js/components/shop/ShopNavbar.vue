@@ -20,12 +20,18 @@ const query = ref('');
 
 const goSearch = () => {
     const value = query.value.trim();
-    if (!value) return;
 
     const el = document.getElementById('catalog');
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
     window.dispatchEvent(new CustomEvent('shop:search', { detail: { query: value } }));
+};
+
+const chooseCategory = (category: string | null) => {
+    const el = document.getElementById('catalog');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    window.dispatchEvent(new CustomEvent('shop:filter-category', { detail: { category } }));
 };
 </script>
 
@@ -54,9 +60,10 @@ const goSearch = () => {
                         <DropdownMenuContent class="w-56">
                             <DropdownMenuLabel>Browse</DropdownMenuLabel>
                             <DropdownMenuSeparator />
+                            <DropdownMenuItem @click="chooseCategory(null)">All categories</DropdownMenuItem>
                             <DropdownMenuItem v-if="!props.categories.length" disabled>No categories yet</DropdownMenuItem>
-                            <DropdownMenuItem v-for="category in props.categories" :key="category" as-child>
-                                <a :href="`#category-${encodeURIComponent(category)}`">{{ category }}</a>
+                            <DropdownMenuItem v-for="category in props.categories" :key="category" @click="chooseCategory(category)">
+                                {{ category }}
                             </DropdownMenuItem>
                         </DropdownMenuContent>
                     </DropdownMenu>
