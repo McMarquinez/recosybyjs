@@ -5,7 +5,7 @@ php artisan storage:link || true
 
 php artisan config:clear
 php artisan config:cache
-php artisan view:cache
+php artisan cache:clear
 
 if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
   php artisan migrate --force
